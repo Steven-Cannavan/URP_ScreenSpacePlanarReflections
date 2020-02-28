@@ -54,6 +54,8 @@ MonoBehaviour:
     PlaneRotation: {x: 0, y: 0, z: 0, w: 0}
     PlaneLocation: {x: 0, y: 0, z: 0}
     ApplyEdgeStretch: 0
+    StretchThreshold: 0.75
+    StretchIntensity: 1
     ApplyBlur: 0
     RenderReflectiveLayer: 0
     ReflectiveSurfaceLayer:

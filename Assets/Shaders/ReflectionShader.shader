@@ -63,9 +63,13 @@
 		{
 			uint Hash = _ScreenSpacePlanarReflectionBuffer.Load(int3(input.uv.x * _SSPRBufferRange.x, input.uv.y * _SSPRBufferRange.y, 0));
 
-
+#if UNITY_UV_STARTS_AT_TOP
+			if (Hash == 0xFFFFFFFF)
+			{
+#else
 			if (Hash == 0)
 			{
+#endif
 				return half4(0, 0, 0, 0);
 			}
 

@@ -4,12 +4,15 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CSClear
 #pragma kernel CSMain
+#pragma kernel CSMain_Stretch
+#pragma kernel CSDebug
 #pragma enable_d3d11_debug_symbols
 
 // Create a RenderTexture with enableRandomWrite flag and set it
 // with cs.SetTexture
 //RW_TEXTURE2D(uint, Result);
 RWTexture2D<uint> Result;
+
 uint2 ResultSize;
 
 [numthreads(32,32,1)]
@@ -18,14 +21,18 @@ void CSClear (uint3 id : SV_DispatchThreadID)
 	if (id.x < ResultSize.x || id.y < ResultSize.y)
 	{
 		// Clear Result
+#if UNITY_UV_STARTS_AT_TOP
+		Result[id.xy] = 0xFFFFFFFF; // if the y is inverted we will want the smallest value not biggest
+#else
 		Result[id.xy] = 0;
+#endif
 	}
     
 }
 Texture2D<float> _CameraDepthTexture;
 float4x4 InverseViewProjection;
 float4x4 ViewProjection;
-float4 ReflectionData[2];
+float4 ReflectionData[3];
 
 
 [numthreads(32,32,1)]
@@ -39,29 +46,24 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 	}
 
 	float2 uv = id.xy * ReflectionData[1].xy + ReflectionData[1].zw;
-	//TODO: correct UV if necessary (clipRect)
-
+#if UNITY_UV_STARTS_AT_TOP
+	uv.y = 1.0 - uv.y;
+#endif
 	
-
 	float deviceDepth = _CameraDepthTexture.Load(int3(id.x, id.y, 0));
 
-#if UNITY_REVERSED_Z
-	deviceDepth = 1 - deviceDepth;
-#endif
-	deviceDepth = 2 * deviceDepth - 1; //NOTE: Currently must massage depth before computing CS position.
+	float4 positionCS = float4(uv * 2.0 - 1.0, deviceDepth, 1.0);
+	float4 hpositionWS = mul(InverseViewProjection, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
 
-
-	
-
-	float3 wpos = ComputeWorldSpacePosition(uv, deviceDepth, InverseViewProjection);
 
 	// compute our plane distance and position
 	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
 	// early out as anything below the plane we dont care about, unless is the very far back, in that casee we guess its the sky box
-	//if (distance < 0.01)
-	//	return;
+	if (distance < 0.001)
+		return;
 
-	float3 reflect_wpos = wpos -(ReflectionData[0].xyz * (distance * 2));
+	float3 reflect_wpos = wpos - (ReflectionData[0].xyz * (distance * 2));
 	float4 reflect_cpos = mul(ViewProjection, float4(reflect_wpos, 1.0));
 	float2 reflect_uv = reflect_cpos.xy / reflect_cpos.w;
 	reflect_uv = float2(0.5, 0.5) + reflect_uv * 0.5;
@@ -76,18 +78,104 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 		// calculate hash
 		uint2 Location = uint2(reflect_uv.x * ResultSize.x, reflect_uv.y * ResultSize.y);
 
-//#if UNITY_UV_STARTS_AT_TOP
-		//uint Hash = ((ResultSize.y-id.y) << 16) | (id.x & 0xFFFF);
-//#else
 		uint Hash = (id.y << 16) | (id.x & 0xFFFF);
-//#endif
 
 		uint dontCare;
-		//Result[Location] = Hash;
-
-
-
+#if UNITY_UV_STARTS_AT_TOP
+		InterlockedMin(Result[Location], Hash, dontCare);
+#else
 		InterlockedMax(Result[Location], Hash, dontCare);
+#endif
 	}
 	
+}
+
+[numthreads(32, 32, 1)]
+void CSMain_Stretch(uint3 id : SV_DispatchThreadID)
+{
+
+	// early out
+	if (id.x >= ResultSize.x || id.y >= ResultSize.y)
+	{
+		return;
+	}
+
+	float2 uv = id.xy * ReflectionData[1].xy + ReflectionData[1].zw;
+#if UNITY_UV_STARTS_AT_TOP
+	uv.y = 1.0 - uv.y;
+#endif
+
+	float deviceDepth = _CameraDepthTexture.Load(int3(id.x, id.y, 0));
+
+	float4 positionCS = float4(uv * 2.0 - 1.0, deviceDepth, 1.0);
+	float4 hpositionWS = mul(InverseViewProjection, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
+
+
+	// compute our plane distance and position
+	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
+	// early out as anything below the plane we dont care about, unless is the very far back, in that casee we guess its the sky box
+	if (distance < 0.001)
+		return;
+
+	float3 reflect_wpos = wpos - (ReflectionData[0].xyz * (distance * 2));
+	float4 reflect_cpos = mul(ViewProjection, float4(reflect_wpos, 1.0));
+	float2 reflect_uv = reflect_cpos.xy / reflect_cpos.w;
+	reflect_uv = float2(0.5, 0.5) + reflect_uv * 0.5;
+
+	// do we have a valid location?
+	if (reflect_uv.x >= 0 && reflect_uv.y >= 0 && reflect_uv.x <= 1.0 && reflect_uv.y <= 1.0)
+	{
+		float HeightStretch = distance;
+		float AngleStretch = saturate(-ReflectionData[2].x);
+		float ScreenStretch = saturate(abs(reflect_uv.x * 2 - 1) - ReflectionData[2].y);
+		reflect_uv.x *= 1 + HeightStretch *AngleStretch * ScreenStretch * ReflectionData[2].z;
+
+#if UNITY_UV_STARTS_AT_TOP
+		reflect_uv.y = 1.0 - reflect_uv.y;
+#endif
+		// calculate hash
+		uint2 Location = uint2(reflect_uv.x * ResultSize.x, reflect_uv.y * ResultSize.y);
+
+		uint Hash = (id.y << 16) | (id.x & 0xFFFF);
+
+		uint dontCare;
+#if UNITY_UV_STARTS_AT_TOP
+		InterlockedMin(Result[Location], Hash, dontCare);
+#else
+		InterlockedMax(Result[Location], Hash, dontCare);
+#endif
+	}
+
+}
+
+RWTexture2D<float4> WorldPositionAndPlaneDistance;
+
+[numthreads(32, 32, 1)]
+void CSDebug(uint3 id : SV_DispatchThreadID)
+{
+	// early out
+	if (id.x >= ResultSize.x || id.y >= ResultSize.y)
+	{
+		return;
+	}
+
+	float2 uv = id.xy * ReflectionData[1].xy + ReflectionData[1].zw;
+	float deviceDepth = _CameraDepthTexture.Load(int3(id.x, id.y, 0));
+
+
+#if UNITY_UV_STARTS_AT_TOP
+	uv.y = 1.0 - uv.y;
+#endif
+
+	float4 positionCS = float4(uv * 2.0 - 1.0, deviceDepth, 1.0);
+	float4 hpositionWS = mul(InverseViewProjection, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
+
+	// compute our plane distance and position
+	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
+
+	uint Hash = (id.y << 16) | (id.x & 0xFFFF);
+	Result[id.xy] = Hash;
+	WorldPositionAndPlaneDistance[id.xy] = float4(wpos.x, wpos.y, wpos.z, distance);
 }

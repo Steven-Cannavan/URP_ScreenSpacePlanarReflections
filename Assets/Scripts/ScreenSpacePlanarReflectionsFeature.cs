@@ -22,7 +22,9 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         public Quaternion PlaneRotation;
         public Vector3 PlaneLocation;
 
-        public bool ApplyEdgeStretch = true; 
+        public bool ApplyEdgeStretch = true;
+        public float StretchThreshold = 0.95f;
+        public float StretchIntensity = 1.0f;
         public bool ApplyBlur = true;
 
 
@@ -121,10 +123,12 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
         RenderTargetHandle m_ScreenSpacePlanarReflection;
         RenderTargetHandle m_ScreenSpacePlanarReflectionBuffer;
+        RenderTargetHandle m_DebugBuffer;
         RenderTexture m_ScreenSpacePlanarReflectionTexture;
         RenderTexture m_ScreenSpacePlanarReflectionTextureBuffer;
         RenderTextureDescriptor m_RenderTextureDescriptor;
         RenderTextureDescriptor m_RenderTextureBufferDescriptor;
+        RenderTextureDescriptor m_DebugBufferDescriptor;
 
         RenderTargetIdentifier m_CameraColorTarget;
         RenderTargetIdentifier m_CameraDepthTarget;
@@ -146,6 +150,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
         int m_ClearKernal;
         int m_RenderKernal;
+        int m_RenderStretchKernal;
+        int m_DebugKernal;
         int m_PropertyResult;
         int m_PropertyResultSize;
         int m_PropertyDepth;
@@ -154,6 +160,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         int m_PropertyReflectionData;
         int m_PropertySSPRBufferRange;
         int m_PropertyMainTex;
+        int m_PropertyDebugTex;
 
         Matrix4x4 m_InvVP;
         Matrix4x4 m_VP;
@@ -162,6 +169,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         RenderStateBlock m_RenderStateBlock;
 
         bool bStencilValid = true;
+
+        const bool bDebug = false;
 
         public ReflectionsRenderPass(ScreenSpacePlanarReflectionsSettings settings)
         {
@@ -176,7 +185,10 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_RenderTextureBufferDescriptor = new RenderTextureDescriptor(512,512,RenderTextureFormat.RInt, 0);
             m_RenderTextureBufferDescriptor.enableRandomWrite = true;
 
-            m_RenderTextureDescriptor = new RenderTextureDescriptor(512, 512, RenderTextureFormat.RGB111110Float, 0);
+            m_DebugBufferDescriptor = new RenderTextureDescriptor(512, 512, RenderTextureFormat.ARGBFloat, 0);
+            m_DebugBufferDescriptor.enableRandomWrite = true;
+
+            m_RenderTextureDescriptor = new RenderTextureDescriptor(512, 512, RenderTextureFormat.ARGB2101010, 0);
             m_Size = new Vector2Int(512,512);
             m_ThreadSize = new Vector2Int(1, 1);
             m_ReflectionShaderCS = settings.reflectionCS;
@@ -186,6 +198,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             {
                 m_ClearKernal = m_ReflectionShaderCS.FindKernel("CSClear");
                 m_RenderKernal = m_ReflectionShaderCS.FindKernel("CSMain");
+                m_RenderStretchKernal = m_ReflectionShaderCS.FindKernel("CSMain_Stretch");
+                m_DebugKernal = m_ReflectionShaderCS.FindKernel("CSDebug");
             }
 
             if(m_ReflectionShader != null)
@@ -201,10 +215,11 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_PropertyReflectionData = Shader.PropertyToID("ReflectionData");
             m_PropertySSPRBufferRange = Shader.PropertyToID("_SSPRBufferRange");
             m_PropertyMainTex = Shader.PropertyToID("_MainTex");
+            m_PropertyDebugTex = Shader.PropertyToID("WorldPositionAndPlaneDistance");
 
             m_InvVP = new Matrix4x4();
             m_VP = new Matrix4x4();
-            m_ReflectionData = new Vector4[2] { new Vector4(), new Vector4() };
+            m_ReflectionData = new Vector4[3] { new Vector4(), new Vector4(), new Vector4() };
             bStencilValid = true;
         }
 
@@ -233,15 +248,33 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_RenderTextureBufferDescriptor.height = m_Size.y;
             m_RenderTextureDescriptor.width = m_Size.x;
             m_RenderTextureDescriptor.height = m_Size.y;
-            m_RenderTextureDescriptor.colorFormat = cameraTextureDescriptor.colorFormat;
+            m_DebugBufferDescriptor.width = m_Size.x;
+            m_DebugBufferDescriptor.height = m_Size.y;
+            //m_RenderTextureDescriptor.colorFormat = cameraTextureDescriptor.colorFormat;
 
             cmd.GetTemporaryRT(m_ScreenSpacePlanarReflection.id, m_RenderTextureDescriptor);
             cmd.GetTemporaryRT(m_ScreenSpacePlanarReflectionBuffer.id, m_RenderTextureBufferDescriptor);
+
+            if (bDebug)
+            {
+                cmd.GetTemporaryRT(m_DebugBuffer.id, m_DebugBufferDescriptor);
+            }
 
             bStencilValid = !cameraTextureDescriptor.bindMS;
 
             m_ThreadSize.x = m_Size.x / 32 + (m_Size.x % 32 > 0 ? 1 : 0);
             m_ThreadSize.y = m_Size.y / 32 + (m_Size.y % 32 > 0 ? 1 : 0);
+
+            if (m_Settings.reflectionCS != null && m_Settings.reflectionCS!=m_ReflectionShaderCS)
+            {
+                m_ReflectionShaderCS = m_Settings.reflectionCS;
+            }
+
+            if (m_Settings.reflectionShader != null && m_Settings.reflectionShader != m_ReflectionShader)
+            {
+                m_ReflectionShader = m_Settings.reflectionShader;
+                m_ReflectionMaterial = new Material(m_ReflectionShader);
+            }
         }
 
         // Here you can implement the rendering logic.
@@ -260,6 +293,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             // Calculate Our Plane and Matrices
             Vector3 temp;
             temp = m_Settings.PlaneRotation * Vector3.up;
+            temp.Normalize();
             m_ReflectionData[0].x = temp.x;
             m_ReflectionData[0].y = temp.y;
             m_ReflectionData[0].z = temp.z;
@@ -268,8 +302,22 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_ReflectionData[1].y = 1.0f / m_Size.y;
             m_ReflectionData[1].z = m_ReflectionData[1].x * 0.5f;
             m_ReflectionData[1].w = m_ReflectionData[1].y * 0.5f;
+            m_ReflectionData[2].x = camera.transform.forward.z;
+            m_ReflectionData[2].y = m_Settings.StretchThreshold;
+            m_ReflectionData[2].z = m_Settings.StretchIntensity;
 
-            m_VP = renderingData.cameraData.camera.projectionMatrix * renderingData.cameraData.camera.worldToCameraMatrix;
+
+            // The actual projection matrix used in shaders is actually massaged a bit to work across all platforms
+            // (different Z value ranges etc.)
+            var gpuProj = GL.GetGPUProjectionMatrix(camera.projectionMatrix, true);
+            Matrix4x4 worldToCamera = camera.cameraToWorldMatrix;
+            Vector4 zaxis  = worldToCamera.GetRow(2);
+            worldToCamera.SetRow(2, -zaxis);
+
+
+            m_VP = camera.projectionMatrix;// * worldToCamera;
+            m_VP = camera.projectionMatrix;
+            m_VP = gpuProj * camera.worldToCameraMatrix;
             m_InvVP = m_VP.inverse;
 
 
@@ -285,68 +333,52 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
                 cmd.DispatchCompute(m_ReflectionShaderCS, m_ClearKernal, m_ThreadSize.x, m_ThreadSize.y, 1);
 
-                
-                // need to run the reflection compute to find image coords
-                cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_RenderKernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
-                //cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_RenderKernal, m_PropertyDepth, BuiltinRenderTextureType.Depth);
-                cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
-                cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyInvVP, m_InvVP);
-                cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyVP, m_VP);
-                cmd.SetComputeVectorArrayParam(m_ReflectionShaderCS, m_PropertyReflectionData, m_ReflectionData);
+                if (bDebug)
+                {
+                    cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_DebugKernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
+                    cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_DebugKernal, m_PropertyDebugTex, m_DebugBuffer.Identifier());
+                    cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
+                    cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyInvVP, m_InvVP);
+                    cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyVP, m_VP);
+                    cmd.SetComputeVectorArrayParam(m_ReflectionShaderCS, m_PropertyReflectionData, m_ReflectionData);
 
-                cmd.DispatchCompute(m_ReflectionShaderCS, m_RenderKernal, m_ThreadSize.x, m_ThreadSize.y, 1);
+                    cmd.DispatchCompute(m_ReflectionShaderCS, m_DebugKernal, m_ThreadSize.x, m_ThreadSize.y, 1);
+                }
+                else
+                {
+                    int Kernal = m_Settings.ApplyEdgeStretch ? m_RenderStretchKernal : m_RenderKernal;
+
+                    // need to run the reflection compute to find image coords
+                    cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
+                    //cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_RenderKernal, m_PropertyDepth, BuiltinRenderTextureType.Depth);
+                    cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
+                    cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyInvVP, m_InvVP);
+                    cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyVP, m_VP);
+                    cmd.SetComputeVectorArrayParam(m_ReflectionShaderCS, m_PropertyReflectionData, m_ReflectionData);
+
+                    cmd.DispatchCompute(m_ReflectionShaderCS, Kernal, m_ThreadSize.x, m_ThreadSize.y, 1);
+                }
                 GraphicsFence fence = cmd.CreateGraphicsFence(GraphicsFenceType.AsyncQueueSynchronisation, SynchronisationStageFlags.ComputeProcessing);
                 cmd.WaitOnAsyncGraphicsFence(fence);
 
+                
 
-                if (m_Settings.ApplyEdgeStretch)
+                if (m_Settings.ApplyBlur)
                 {
-                    // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
                     cmd.GetTemporaryRT(m_Temp[0].id, m_RenderTextureDescriptor);
-
-                    // render
+                    // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
                     RenderReflection(cmd, m_Temp[0].Identifier(), camera);
+                    // render blur
+                    RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier());
 
-
-                    if (m_Settings.ApplyBlur)
-                    {
-                        // will need one more temporary texture
-                        cmd.GetTemporaryRT(m_Temp[1].id, m_RenderTextureDescriptor);
-
-                        // we blit and squish the edges to make a full image
-                        RenderSquishEdges(cmd, m_Temp[1].Identifier(), m_Temp[0].Identifier());
-                        // we apply a simple box filter blur
-                        RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[1].Identifier());
-
-                        cmd.ReleaseTemporaryRT(m_Temp[1].id);
-
-                    }
-                    else
-                    {
-                        // we blit and squish the edges to make a full image
-                        RenderSquishEdges(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier());
-                    }
                     cmd.ReleaseTemporaryRT(m_Temp[0].id);
                 }
                 else
                 {
-
-                    if (m_Settings.ApplyBlur)
-                    {
-                        cmd.GetTemporaryRT(m_Temp[0].id, m_RenderTextureDescriptor);
-                        // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                        RenderReflection(cmd, m_Temp[0].Identifier(), camera);
-                        // render blur
-                        RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier());
-
-                        cmd.ReleaseTemporaryRT(m_Temp[0].id);
-                    }
-                    else
-                    {
-                        // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                        RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier(), camera);
-                    }
+                    // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
+                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier(), camera);
                 }
+                
 
 
                 // restore target state
@@ -373,6 +405,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             if (m_ReflectionShader == null)
             {
                 m_ReflectionMaterial = new Material(m_ReflectionShader);
+
             }
 
             cmd.SetRenderTarget(m_ScreenSpacePlanarReflection.Identifier(), RenderBufferLoadAction.Load, RenderBufferStoreAction.Store, bStencilValid ? m_CameraDepthTarget : RenderTargetHandle.CameraTarget.Identifier(), RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
@@ -389,11 +422,6 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             //cmd.Blit(m_CameraColorTarget, target, m_ReflectionMaterial, 0);
             //cmd.SetGlobalTexture(COLOR_ATTACHMENT, m_CameraColorTarget);
             //cmd.Blit(m_CameraColorTarget, target);//, m_ReflectionMaterial, 0);
-        }
-
-        void RenderSquishEdges(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source)
-        {
-
         }
 
         void RenderBlur(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source)
