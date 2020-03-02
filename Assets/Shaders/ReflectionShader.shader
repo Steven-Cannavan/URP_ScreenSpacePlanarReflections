@@ -26,7 +26,21 @@
 		#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 		//#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
 
+#ifdef SHADER_API_METAL
+        uint BufferStep;
+        uint GetIndex(uint2 id)
+        {
+            uint Index = id.x%4 + (id.y%4) * 4;
+            return Index + (id.y>>2) * BufferStep + (id.x>>2) * 16;
+        }
+
+        Buffer<uint> _ScreenSpacePlanarReflectionBuffer;
+
+#define LOAD(pixel) _ScreenSpacePlanarReflectionBuffer.Load(GetIndex(pixel))
+#else
 		Texture2D<uint> _ScreenSpacePlanarReflectionBuffer;
+#define LOAD(pixel) _ScreenSpacePlanarReflectionBuffer.Load(int3(pixel.x, pixel.y, 0))
+#endif
 		float4 _SSPRBufferRange;
 
 		
@@ -72,7 +86,7 @@
 
 		half4 RenderFragment(Varyings input) : SV_Target
 		{
-			uint Hash = _ScreenSpacePlanarReflectionBuffer.Load(int3(input.uv.x * _SSPRBufferRange.x, input.uv.y * _SSPRBufferRange.y, 0));
+			uint Hash = LOAD(int2(input.uv.x * _SSPRBufferRange.x, input.uv.y * _SSPRBufferRange.y)); //_ScreenSpacePlanarReflectionBuffer.Load(int3(input.uv.x * _SSPRBufferRange.x, input.uv.y * _SSPRBufferRange.y, 0));
 
 #if UNITY_UV_STARTS_AT_TOP
 			if (Hash == 0xFFFFFFFF)
@@ -145,44 +159,6 @@
 			#pragma enable_d3d11_debug_symbols
 			#pragma vertex   Vertex
 			#pragma fragment BlurFragment
-			ENDHLSL
-		}
-
-		Pass
-		{
-			Name "DepthOnly"
-			Tags{"LightMode" = "DepthOnly"}
-
-			ZWrite On
-			ColorMask 0
-			Cull[_Cull]
-
-			Stencil {
-				Ref[_Ref]
-				Comp always
-				Pass replace
-			}
-
-			HLSLPROGRAM
-			// Required to compile gles 2.0 with standard srp library
-			#pragma prefer_hlslcc gles
-			#pragma exclude_renderers d3d11_9x
-			#pragma target 2.0
-
-			#pragma vertex DepthOnlyVertex
-			#pragma fragment DepthOnlyFragment
-
-			// -------------------------------------
-			// Material Keywords
-			#pragma shader_feature _ALPHATEST_ON
-			#pragma shader_feature _SMOOTHNESS_TEXTURE_ALBEDO_CHANNEL_A
-
-			//--------------------------------------
-			// GPU Instancing
-			#pragma multi_compile_instancing
-
-			#include "Packages/com.unity.render-pipelines.universal/Shaders/LitInput.hlsl"
-			#include "Packages/com.unity.render-pipelines.universal/Shaders/DepthOnlyPass.hlsl"
 			ENDHLSL
 		}
     }

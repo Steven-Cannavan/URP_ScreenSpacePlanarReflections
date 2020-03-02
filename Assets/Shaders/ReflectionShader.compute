@@ -8,12 +8,25 @@
 #pragma kernel CSDebug
 #pragma enable_d3d11_debug_symbols
 
-// Create a RenderTexture with enableRandomWrite flag and set it
-// with cs.SetTexture
-//RW_TEXTURE2D(uint, Result);
+// For platforms that dont support atomic ops on RWTextures we will
+// swap out for a buffer instead, 
+#ifdef SHADER_API_METAL
+uint BufferStep;
+uint GetIndex(uint2 id)
+{
+    uint Index = id.x%4 + (id.y%4) * 4;
+    return Index + (id.y>>2) * BufferStep + (id.x>>2) * 16;
+}
+
+RWBuffer<uint> Result;
+#define INDEX(id) GetIndex(id)
+#else
 RWTexture2D<uint> Result;
+#define INDEX(id) id
+#endif
 
 uint2 ResultSize;
+
 
 [numthreads(32,32,1)]
 void CSClear (uint3 id : SV_DispatchThreadID)
@@ -22,9 +35,9 @@ void CSClear (uint3 id : SV_DispatchThreadID)
 	{
 		// Clear Result
 #if UNITY_UV_STARTS_AT_TOP
-		Result[id.xy] = 0xFFFFFFFF; // if the y is inverted we will want the smallest value not biggest
+		Result[INDEX(id.xy)] = 0xFFFFFFFF; // if the y is inverted we will want the smallest value not biggest
 #else
-		Result[id.xy] = 0;
+		Result[INDEX(id.xy)] = 0;
 #endif
 	}
     
@@ -82,9 +95,9 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
 		uint dontCare;
 #if UNITY_UV_STARTS_AT_TOP
-		InterlockedMin(Result[Location], Hash, dontCare);
+		InterlockedMin(Result[INDEX(Location)], Hash, dontCare);
 #else
-		InterlockedMax(Result[Location], Hash, dontCare);
+		InterlockedMax(Result[INDEX(Location)], Hash, dontCare);
 #endif
 	}
 	
@@ -141,9 +154,9 @@ void CSMain_Stretch(uint3 id : SV_DispatchThreadID)
 
 		uint dontCare;
 #if UNITY_UV_STARTS_AT_TOP
-		InterlockedMin(Result[Location], Hash, dontCare);
+		InterlockedMin(Result[INDEX(Location)], Hash, dontCare);
 #else
-		InterlockedMax(Result[Location], Hash, dontCare);
+		InterlockedMax(Result[INDEX(Location]), Hash, dontCare);
 #endif
 	}
 
@@ -176,6 +189,6 @@ void CSDebug(uint3 id : SV_DispatchThreadID)
 	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
 
 	uint Hash = (id.y << 16) | (id.x & 0xFFFF);
-	Result[id.xy] = Hash;
+	Result[INDEX(id.xy)] = Hash;
 	WorldPositionAndPlaneDistance[id.xy] = float4(wpos.x, wpos.y, wpos.z, distance);
 }
