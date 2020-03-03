@@ -452,7 +452,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
         void RenderReflection(CommandBuffer cmd, RenderTargetIdentifier target, Camera camera, bool restoreMatrices = true)
         {
-            if (m_ReflectionShader == null || m_ReflectionMaterial.shader == null)
+            if (m_ReflectionMaterial == null || m_ReflectionMaterial.shader == null)
             {
                 m_ReflectionMaterial = new Material(m_ReflectionShader);
             }
