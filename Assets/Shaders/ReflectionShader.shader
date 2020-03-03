@@ -2,12 +2,6 @@
 {
 	Properties
 	{
-		[MainColor] _BaseColor("Color", Color) = (0.5,0.5,0.5,1)
-		[MainTexture] _BaseMap("Albedo", 2D) = "white" {}
-		_Cutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
-		
-		[HideInInspector] _Cull("__cull", Float) = 2.0
-		[HideInInspector] _Ref("__ref", Float) = 0
 	}
 
 	SubShader
@@ -25,13 +19,15 @@
 		//#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ImageBasedLighting.hlsl"
 		#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 		//#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Shadows.hlsl"
+		float4 _SSPRBufferRange;
 
-#ifdef SHADER_API_METAL
-        uint BufferStep;
+#if SHADER_API_METAL
+        uint _SSPRBufferStride;
         uint GetIndex(uint2 id)
         {
-            uint Index = id.x%4 + (id.y%4) * 4;
-            return Index + (id.y>>2) * BufferStep + (id.x>>2) * 16;
+			return ((id.y / 4) * _SSPRBufferStride + (id.x / 4) * 16) + ((id.y % 4) * 4) + (id.x % 4);
+
+			//return id.y * _SSPRBufferRange.x + id.x;
         }
 
         Buffer<uint> _ScreenSpacePlanarReflectionBuffer;
@@ -41,7 +37,7 @@
 		Texture2D<uint> _ScreenSpacePlanarReflectionBuffer;
 #define LOAD(pixel) _ScreenSpacePlanarReflectionBuffer.Load(int3(pixel.x, pixel.y, 0))
 #endif
-		float4 _SSPRBufferRange;
+		
 
 		
 		//TEXTURE2D_X(_CameraColorAttachment);
@@ -100,7 +96,16 @@
 
 			float2 uv = float2((Hash & 0xFFFF) / _SSPRBufferRange.x, (Hash >> 16) / _SSPRBufferRange.y);
 
-			return SAMPLE_TEXTURE2D_X(_MainTex, sampler_LinearClamp, uv);		
+			float4 value = SAMPLE_TEXTURE2D_X(_MainTex, sampler_LinearClamp, uv);
+
+			// Y fade
+#if UNITY_UV_STARTS_AT_TOP
+			value.a = (1.0 - uv.y) * 10.0;
+#else
+			value.a = uv.y * 10.0;
+#endif
+
+			return value;
 		}
 
 		static const float Weights[] = {0.0625, 0.125, 0.0625,0.0125, 0.25, 0.125 ,0.0625, 0.125, 0.0625 };
@@ -117,7 +122,7 @@
 			{
 				float4 value = SAMPLE_TEXTURE2D_X(_MainTex, sampler_PointClamp, input.uv + Offsets[i] * _MainTex_TexelSize.xy);
 				Total += value * Weights[i];
-				TotalWeight += value.a * Weights[i];
+				TotalWeight += (value.a > 0 ? 1 : 0) * Weights[i];
 			}
 			
 			// Adjust the value by the number of 'invalid samples' to make sure were a 'normalized' sample
@@ -125,7 +130,7 @@
 
 			// if we have a weight above 0.125 we will treat it as a solid opaque pixel
 			// otherwise we only a contribution from the very corner pieces of the 3x3 filter so we probably can ignore that
-			Total.a = TotalWeight >= 0.125 ? 1.0 : 0.0;
+			Total.a *= TotalWeight >= 0.125 ? 1.0 : 0.0;
 
 			return Total;
 		}

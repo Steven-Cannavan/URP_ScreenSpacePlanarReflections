@@ -10,9 +10,6 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
     [System.Serializable, ReloadGroup]
     public class ScreenSpacePlanarReflectionsSettings
     {
-        
-        public RenderPassEvent Event = RenderPassEvent.AfterRenderingOpaques;
-
         [Reload("Shaders/ReflectionShader.compute")]
         public ComputeShader reflectionCS;
 
@@ -193,7 +190,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_DebugBufferDescriptor = new RenderTextureDescriptor(512, 512, RenderTextureFormat.ARGBFloat, 0);
             m_DebugBufferDescriptor.enableRandomWrite = true;
 
-            m_RenderTextureDescriptor = new RenderTextureDescriptor(512, 512, RenderTextureFormat.ARGB2101010, 0);
+            m_RenderTextureDescriptor = new RenderTextureDescriptor(512, 512, RenderTextureFormat.ARGB32, 0);
 
             m_DepthTexture.Init("_CameraDepthTexture");
             m_RenderTextureDescriptor.msaaSamples = 1;
@@ -225,7 +222,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_PropertySSPRBufferRange = Shader.PropertyToID("_SSPRBufferRange");
             m_PropertyMainTex = Shader.PropertyToID("_MainTex");
             m_PropertyDebugTex = Shader.PropertyToID("WorldPositionAndPlaneDistance");
-            m_PropertyBufferStep = Shader.PropertyToID("BufferStep");
+            m_PropertyBufferStep = Shader.PropertyToID("_SSPRBufferStride");
 
             m_InvVP = new Matrix4x4();
             m_VP = new Matrix4x4();
@@ -266,8 +263,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Metal)
             {
-                m_BufferStride = (m_Size.x>>2 + m_Size.x%4 > 0 ? 1 : 0) * 16;
-                int Size = (m_Size.y >> 2 + m_Size.y % 4 > 0 ? 1 : 0) * m_BufferStride;
+                m_BufferStride = ((m_Size.x/4) + (m_Size.x%4 > 0 ? 1 : 0)) * 16;
+                int Size = ((m_Size.y/4) + (m_Size.y % 4 > 0 ? 1 : 0)) * m_BufferStride;
 
                 if(m_MetalBuffer == null || m_MetalBuffer.count < Size)
                 {
@@ -400,8 +397,6 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                     {
                         cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
                     }
-                    // need to run the reflection compute to find image coords
-                    cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
                     cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_DepthTexture.Identifier());
                     //cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_RenderKernal, m_PropertyDepth, BuiltinRenderTextureType.Depth);
                     cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
@@ -457,7 +452,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
         void RenderReflection(CommandBuffer cmd, RenderTargetIdentifier target, Camera camera, bool restoreMatrices = true)
         {
-            if (m_ReflectionShader == null || m_ReflectionMaterial.shader != null)
+            if (m_ReflectionShader == null || m_ReflectionMaterial.shader == null)
             {
                 m_ReflectionMaterial = new Material(m_ReflectionShader);
             }
@@ -476,6 +471,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Metal)
             {
                 cmd.SetGlobalBuffer(m_ScreenSpacePlanarReflectionBuffer.id, m_MetalBuffer);
+                cmd.SetGlobalInt(m_PropertyBufferStep, m_BufferStride);
             }
             else
             {

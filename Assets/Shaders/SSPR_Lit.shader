@@ -155,14 +155,7 @@
 
 			half4 ScreenSpaceReflection(half2 uv, half3 normalWS, half occlusion, half roughness)
 			{
-
-#if UNITY_UV_STARTS_AT_TOP
-				uv.y = 1 - uv.y;
-#endif
-				float yFade = min(uv.y * 10, 1.0);
-
-
-				return SAMPLE_TEXTURE2D(_ScreenSpacePlanarReflectionTexture, sampler_ScreenSpacePlanarReflectionTexture, uv) * occlusion * (yFade*yFade);
+				return SAMPLE_TEXTURE2D(_ScreenSpacePlanarReflectionTexture, sampler_ScreenSpacePlanarReflectionTexture, uv) * occlusion;
 			}
 
 			half3 GlobalIlluminationWithPlanarReflection(BRDFData brdfData, half3 bakedGI, half occlusion, half3 normalWS, half3 viewDirectionWS, half2 uv)
@@ -304,6 +297,9 @@
 
 				float2 ScreenUV = input.screenPosition.xy / input.screenPosition.w;
 				ScreenUV = float2(0.5, 0.5) + ScreenUV * float2(0.5, 0.5);
+#if UNITY_UV_STARTS_AT_TOP
+				ScreenUV.y = 1 - ScreenUV.y;
+#endif
 
 				half4 color = CustomUniversalFragmentPBR(inputData, surfaceData.albedo, surfaceData.metallic, surfaceData.specular, surfaceData.smoothness, surfaceData.occlusion, surfaceData.emission, surfaceData.alpha, ScreenUV);
 

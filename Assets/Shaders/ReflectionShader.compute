@@ -8,14 +8,20 @@
 #pragma kernel CSDebug
 #pragma enable_d3d11_debug_symbols
 
+
+uint2 ResultSize;
+
 // For platforms that dont support atomic ops on RWTextures we will
 // swap out for a buffer instead, 
-#ifdef SHADER_API_METAL
-uint BufferStep;
+#if SHADER_API_METAL
+uint _SSPRBufferStride;
+// We calculate a position in a way i hope is more cache efficent
+// probably better to do morten encoding/decoding but im not that clever
 uint GetIndex(uint2 id)
 {
-    uint Index = id.x%4 + (id.y%4) * 4;
-    return Index + (id.y>>2) * BufferStep + (id.x>>2) * 16;
+	return ((id.y / 4) * _SSPRBufferStride + (id.x / 4) * 16) + ((id.y % 4) * 4) + (id.x % 4);
+
+	//return id.y * ResultSize.x + id.x;
 }
 
 RWBuffer<uint> Result;
@@ -24,8 +30,6 @@ RWBuffer<uint> Result;
 RWTexture2D<uint> Result;
 #define INDEX(id) id
 #endif
-
-uint2 ResultSize;
 
 
 [numthreads(32,32,1)]
