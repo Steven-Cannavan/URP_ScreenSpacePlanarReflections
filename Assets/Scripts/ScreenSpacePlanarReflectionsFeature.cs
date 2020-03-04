@@ -320,6 +320,11 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 return;
             }
 
+            if (m_ReflectionMaterial == null || m_ReflectionMaterial.shader == null)
+            {
+                m_ReflectionMaterial = new Material(m_ReflectionShader);
+            }
+
             Camera camera = renderingData.cameraData.camera;
 
             // Calculate Our Plane and Matrices
@@ -356,10 +361,6 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             CommandBuffer cmd = CommandBufferPool.Get(m_ProfilerTag);
             using (new ProfilingSample(cmd, m_ProfilerTag))
             {
-
-
-
-
                 // need to run compute shader to clear
                 if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Metal)
                 {
@@ -414,14 +415,14 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 if (m_Settings.ApplyBlur)
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                    RenderReflection(cmd, m_Temp[0].Identifier(), camera, false);
+                    RenderReflection(cmd, m_Temp[0].Identifier());
                     // render blur
-                    RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier(), camera);
+                    RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier());
                 }
                 else
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier(), camera);
+                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier());\
                 }
                 
 
@@ -450,12 +451,9 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             }
         }
 
-        void RenderReflection(CommandBuffer cmd, RenderTargetIdentifier target, Camera camera, bool restoreMatrices = true)
+        void RenderReflection(CommandBuffer cmd, RenderTargetIdentifier target)
         {
-            if (m_ReflectionMaterial == null || m_ReflectionMaterial.shader == null)
-            {
-                m_ReflectionMaterial = new Material(m_ReflectionShader);
-            }
+            
 
             if(m_Settings.needsStencilPass)
             {
@@ -479,26 +477,16 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             }
             cmd.SetGlobalTexture(m_PropertyMainTex, m_CameraColorTarget);
             
-            cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
-            cmd.SetViewport(camera.pixelRect);
-            cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_ReflectionMaterial, 0, 0);
-            if (restoreMatrices)
-            {
-                cmd.SetViewProjectionMatrices(camera.worldToCameraMatrix, camera.projectionMatrix);
-            }
 
+            cmd.Blit(m_CameraColorTarget, target, m_ReflectionMaterial, 0);
 
-            //cmd.Blit(m_CameraColorTarget, target, m_ReflectionMaterial, 0);
-            //cmd.SetGlobalTexture(COLOR_ATTACHMENT, m_CameraColorTarget);
-            //cmd.Blit(m_CameraColorTarget, target);//, m_ReflectionMaterial, 0);
         }
 
-        void RenderBlur(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source, Camera camera)
+        void RenderBlur(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source)
         {
             cmd.SetRenderTarget(target, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
             cmd.SetGlobalTexture(m_PropertyMainTex, source);
-            cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_ReflectionMaterial, 0, 1);
-            cmd.SetViewProjectionMatrices(camera.worldToCameraMatrix, camera.projectionMatrix);
+            cmd.Blit(source, target, m_ReflectionMaterial, 1);
 
         }
     }

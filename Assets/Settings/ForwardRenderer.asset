@@ -35,6 +35,7 @@ MonoBehaviour:
     passOperation: 0
     failOperation: 0
     zFailOperation: 0
+  m_ShadowTransparentReceive: 1
 --- !u!114 &7593686429009788017
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -48,10 +49,9 @@ MonoBehaviour:
   m_Name: NewScreenSpacePlanarReflectionsFeature
   m_EditorClassIdentifier: 
   settings:
-    Event: 300
     reflectionCS: {fileID: 7200000, guid: da54943f5ddda4d19ad47cdfacf5f200, type: 3}
     reflectionShader: {fileID: 4800000, guid: afebf35d9f44feb4a8190b90b36144b5, type: 3}
-    PlaneRotation: {x: 0, y: 0, z: 0, w: 0}
+    PlaneRotation: {x: 0, y: 0, z: 0, w: 1}
     PlaneLocation: {x: 0, y: 0, z: 0}
     ApplyEdgeStretch: 0
     StretchThreshold: 0.75
