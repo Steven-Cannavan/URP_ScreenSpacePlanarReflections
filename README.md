@@ -5,9 +5,12 @@ Simple example of implementing screen space planar reflections as a RenderFeatur
 
 Based upon Remi Genin's work: [Screen Space Plane Indexed Reflection In Ghost Recon Wildlands](http://remi-genin.fr/blog/screen-space-plane-indexed-reflection-in-ghost-recon-wildlands/)
 
-I havent put a particular license on this yet, and when I do it will be very permisive as this is supposed to be an example of what you can do rather than an actual product, you can use this in your own projects and feel free to say thanks! However I have no intention of supporting this except beyond updating it against later versions of URP/Unity and devices just so the example stays valid. 
+This has been created for educational purposes, not for production. Use this at your own risk.
 
-You use this at your own risk I take no responsibility.
+Known Issues:
+* Doesn't work for iOS
+* Doesn't work for Android
+* Still in progress :)
 
 ## How To Use
 
@@ -45,6 +48,7 @@ Renderes all renderers in the Reflective Surface Layer, follows opaque rules (fo
 
 
 ## In Progress
+* iOS Fix
 * Stencil Optmization
 * Roughness / Kawase blur sampling
 

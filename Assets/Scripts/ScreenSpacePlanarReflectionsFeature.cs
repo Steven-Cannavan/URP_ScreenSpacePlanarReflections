@@ -422,7 +422,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 else
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier());\
+                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier());
                 }
                 
 
