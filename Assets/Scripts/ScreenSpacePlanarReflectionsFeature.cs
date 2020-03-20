@@ -458,11 +458,13 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             if(m_Settings.needsStencilPass)
             {
                 // if were MSAA lets use the depth texture other wise we can re-use the camera depth texture
-                cmd.SetRenderTarget(target, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store, m_MSAA ? m_DepthTexture.Identifier() : m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, m_MSAA ? m_DepthTexture.Identifier() : m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.ClearRenderTarget(false, true, Color.black);
             }
             else
             {
                 cmd.SetRenderTarget(target, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.ClearRenderTarget(false, true, Color.black);
             }
 
             cmd.SetGlobalVector(m_PropertySSPRBufferRange, new Vector4(m_Size.x, m_Size.y, 0, 0));
@@ -484,7 +486,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
         void RenderBlur(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source)
         {
-            cmd.SetRenderTarget(target, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+            cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            cmd.ClearRenderTarget(false, true, Color.black);
             cmd.SetGlobalTexture(m_PropertyMainTex, source);
             cmd.Blit(source, target, m_ReflectionMaterial, 1);
 
