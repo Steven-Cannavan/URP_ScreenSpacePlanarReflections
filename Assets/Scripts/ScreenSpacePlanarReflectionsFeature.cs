@@ -428,7 +428,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
 
                 // restore target state
-                cmd.SetRenderTarget(m_CameraColorTarget, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.SetRenderTarget(m_CameraColorTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store, m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
                 cmd.SetGlobalTexture(m_ScreenSpacePlanarReflection.id, m_ScreenSpacePlanarReflection.Identifier());
 
             }
@@ -463,7 +463,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             }
             else
             {
-                cmd.SetRenderTarget(target, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
                 cmd.ClearRenderTarget(false, true, Color.black);
             }
 
