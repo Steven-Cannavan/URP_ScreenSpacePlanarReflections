@@ -8,7 +8,6 @@ Based upon Remi Genin's work: [Screen Space Plane Indexed Reflection In Ghost Re
 This has been created for educational purposes, not for production. Use this at your own risk.
 
 Known Issues:
-* Doesn't work for iOS
 * Doesn't work for Android
 * Still in progress :)
 
