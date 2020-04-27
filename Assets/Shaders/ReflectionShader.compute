@@ -19,7 +19,7 @@ uint _SSPRBufferStride;
 // probably better to do morten encoding/decoding but im not that clever
 uint GetIndex(uint2 id)
 {
-	return ((id.y / 4) * _SSPRBufferStride + (id.x / 4) * 16) + ((id.y % 4) * 4) + (id.x % 4);
+	return ((id.y / 4) * _SSPRBufferStride) + ((id.x / 4) * 16) + ((id.y % 4) * 4) + (id.x % 4);
 
 	//return id.y * ResultSize.x + id.x;
 }
@@ -35,7 +35,7 @@ RWTexture2D<uint> Result;
 [numthreads(32,32,1)]
 void CSClear (uint3 id : SV_DispatchThreadID)
 {
-	if (id.x < ResultSize.x || id.y < ResultSize.y)
+	if (id.x < ResultSize.x && id.y < ResultSize.y)
 	{
 		// Clear Result
 #if UNITY_UV_STARTS_AT_TOP

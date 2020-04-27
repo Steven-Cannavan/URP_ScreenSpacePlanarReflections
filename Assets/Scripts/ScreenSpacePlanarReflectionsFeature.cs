@@ -270,9 +270,10 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 {
                     if(m_MetalBuffer!=null)
                     {
+                        //Debug.Log("Releasing Buffer, old size "+m_MetalBuffer.count + " new size "+Size);
                         m_MetalBuffer.Release();
                     }
-                    m_MetalBuffer = new ComputeBuffer(Size, 4, ComputeBufferType.Raw);
+                    m_MetalBuffer = new ComputeBuffer(Size, 4, ComputeBufferType.Default);
                 }
 
             }
@@ -296,6 +297,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
             m_ThreadSize.x = m_Size.x / 32 + (m_Size.x % 32 > 0 ? 1 : 0);
             m_ThreadSize.y = m_Size.y / 32 + (m_Size.y % 32 > 0 ? 1 : 0);
+
+            //Debug.Log("Thread Size " + m_ThreadSize.x + ", " + m_ThreadSize.y);
 
             if (m_Settings.reflectionCS != null && m_Settings.reflectionCS!=m_ReflectionShaderCS)
             {
@@ -361,6 +364,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             CommandBuffer cmd = CommandBufferPool.Get(m_ProfilerTag);
             using (new ProfilingSample(cmd, m_ProfilerTag))
             {
+                
                 // need to run compute shader to clear
                 if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Metal)
                 {
@@ -373,8 +377,12 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 }
                 cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
                 cmd.DispatchCompute(m_ReflectionShaderCS, m_ClearKernal, m_ThreadSize.x, m_ThreadSize.y, 1);
-
-                if (bDebug)
+                {
+                    //GraphicsFence fence = cmd.CreateGraphicsFence(GraphicsFenceType.AsyncQueueSynchronisation, SynchronisationStageFlags.ComputeProcessing);
+                    //cmd.WaitOnAsyncGraphicsFence(fence);
+                }
+                
+                if (bDebug && SystemInfo.graphicsDeviceType != GraphicsDeviceType.Metal)
                 {
                     cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_DebugKernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
                     cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_DebugKernal, m_PropertyDebugTex, m_DebugBuffer.Identifier());
@@ -407,11 +415,12 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
                     cmd.DispatchCompute(m_ReflectionShaderCS, Kernal, m_ThreadSize.x, m_ThreadSize.y, 1);
                 }
-                GraphicsFence fence = cmd.CreateGraphicsFence(GraphicsFenceType.AsyncQueueSynchronisation, SynchronisationStageFlags.ComputeProcessing);
-                cmd.WaitOnAsyncGraphicsFence(fence);
-
+                {
+                    GraphicsFence fence = cmd.CreateGraphicsFence(GraphicsFenceType.AsyncQueueSynchronisation, SynchronisationStageFlags.ComputeProcessing);
+                    cmd.WaitOnAsyncGraphicsFence(fence);
+                }
                 
-
+                
                 if (m_Settings.ApplyBlur)
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
@@ -422,13 +431,13 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 else
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier());\
+                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier());
                 }
                 
 
 
                 // restore target state
-                cmd.SetRenderTarget(m_CameraColorTarget, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.SetRenderTarget(m_CameraColorTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store, m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
                 cmd.SetGlobalTexture(m_ScreenSpacePlanarReflection.id, m_ScreenSpacePlanarReflection.Identifier());
 
             }
