@@ -2,6 +2,7 @@
 {
 	Properties
 	{
+		[IntRange] _StencilRef("Stencil Reference Value", Range(0,255)) = 0
 	}
 
 	SubShader
@@ -160,6 +161,47 @@
 			ZTest Always
 			ZWrite Off
 			Cull Off
+			HLSLPROGRAM
+			#pragma enable_d3d11_debug_symbols
+			#pragma vertex   Vertex
+			#pragma fragment BlurFragment
+			ENDHLSL
+		}
+
+		Pass
+		{
+			Name "ScreenSpacePlanarReflection"
+			ZTest Always
+			ZWrite Off
+			Cull Off
+
+			Stencil{
+				Ref[_StencilRef]
+				Comp Equal
+			}
+
+			HLSLPROGRAM
+
+			#pragma enable_d3d11_debug_symbols
+			#pragma multi_compile COLOR_ATTACHMENT
+			#pragma multi_compile _NO_MSAA _MSAA_2 _MSAA_4
+			#pragma vertex   Vertex
+			#pragma fragment RenderFragment
+			ENDHLSL
+		}
+
+		Pass
+		{
+			Name "ScreenSpacePlanarReflection"
+			ZTest Always
+			ZWrite Off
+			Cull Off
+
+			Stencil{
+				Ref[_StencilRef]
+				Comp Equal
+			}
+
 			HLSLPROGRAM
 			#pragma enable_d3d11_debug_symbols
 			#pragma vertex   Vertex

@@ -44,16 +44,27 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             get { return RenderReflectiveLayer && ReflectiveSurfaceLayer != 0; }
         }
 
+        internal bool EnqueuedStencilPass = false;
+        
+
+
+
     }
 
     class StencilRenderPass : ScriptableRenderPass
     {
         private const string m_ProfilerTag = "ReflectionsFeature_Stencil";
+        private ProfilingSampler m_ProfilerSampler = new ProfilingSampler(m_ProfilerTag);
         private ScreenSpacePlanarReflectionsSettings m_Settings;
         RenderStateBlock m_RenderStateBlock;
         FilteringSettings m_FilteringSettings;
 
         List<ShaderTagId> m_ShaderTagIdList = new List<ShaderTagId>();
+
+        RenderTargetIdentifier m_CameraColorTarget;
+        RenderTargetIdentifier m_CameraDepthTarget;
+
+        RenderTargetHandle m_DepthTexture;
 
 
         public StencilRenderPass(ScreenSpacePlanarReflectionsSettings settings)
@@ -80,6 +91,68 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
             m_ShaderTagIdList.Add(new ShaderTagId("DepthOnly"));
 
+            m_DepthTexture.Init("_CameraDepthTexture");
+
+        }
+
+        bool CanCopyDepth(ref CameraData cameraData)
+        {
+            bool msaaEnabledForCamera = cameraData.cameraTargetDescriptor.msaaSamples > 1;
+            bool supportsTextureCopy = SystemInfo.copyTextureSupport != CopyTextureSupport.None;
+            bool supportsDepthTarget = RenderingUtils.SupportsRenderTextureFormat(RenderTextureFormat.Depth);
+            bool supportsDepthCopy = !msaaEnabledForCamera && (supportsDepthTarget || supportsTextureCopy);
+
+            // TODO:  We don't have support to highp Texture2DMS currently and this breaks depth precision.
+            // currently disabling it until shader changes kick in.
+            //bool msaaDepthResolve = msaaEnabledForCamera && SystemInfo.supportsMultisampledTextures != 0;
+            bool msaaDepthResolve = false;
+            return supportsDepthCopy || msaaDepthResolve;
+        }
+
+        public bool Setup(ScriptableRenderer renderer, ref RenderingData renderingData)
+        {
+            m_CameraColorTarget = renderer.cameraColorTarget;
+            m_CameraDepthTarget = renderer.cameraDepth;
+
+            // if it matches with Camera Target then it should be equal to whatever CameraColorTarget is
+            if (m_CameraDepthTarget.Equals(RenderTargetHandle.CameraTarget.Identifier()))
+            {
+                m_CameraDepthTarget = m_CameraColorTarget;
+            }
+
+            bool requiresDepthTexture = renderingData.cameraData.requiresDepthTexture;
+            // Depth prepass is generated in the following cases:
+            // - Scene view camera always requires a depth texture. We do a depth pre-pass to simplify it and it shouldn't matter much for editor.
+            // - If game or offscreen camera requires it we check if we can copy the depth from the rendering opaques pass and use that instead.
+            bool requiresDepthPrepass = renderingData.cameraData.isSceneViewCamera;
+            requiresDepthPrepass |= (requiresDepthTexture && !CanCopyDepth(ref renderingData.cameraData));
+
+            bool createDepthTexture = requiresDepthTexture && !requiresDepthPrepass;
+
+            if(requiresDepthPrepass)
+            {
+                renderPassEvent = RenderPassEvent.AfterRenderingPrePasses; // we want to render into the depth texture after its been created
+                return true;
+            }
+            else if(createDepthTexture)
+            {
+                if (renderingData.cameraData.requiresDepthTexture && createDepthTexture)
+                {
+                    renderPassEvent = RenderPassEvent.BeforeRenderingSkybox; // we want to render into the depth texture after its been copied
+                    return true;
+                }
+                    
+            }
+            return false;
+
+        }
+
+        public override void Configure(CommandBuffer cmd, RenderTextureDescriptor cameraTextureDescriptor)
+        {
+
+           // cmd.GetTemporaryRT(m_DepthTexture.id, cameraTextureDescriptor, FilterMode.Point);
+            ConfigureTarget(m_DepthTexture.Identifier());
+            ConfigureClear(ClearFlag.None, Color.black);
         }
 
         // Here you can implement the rendering logic.
@@ -100,7 +173,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             // Render any 'reflective surfaces' with the stencil value,
             // will use this to generate the texture later
             CommandBuffer cmd = CommandBufferPool.Get(m_ProfilerTag);
-            using (new ProfilingSample(cmd, m_ProfilerTag))
+            using (new ProfilingScope(cmd, m_ProfilerSampler))
             {
                 context.ExecuteCommandBuffer(cmd);
                 cmd.Clear();
@@ -117,6 +190,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
     class ReflectionsRenderPass : ScriptableRenderPass
     {
         private const string m_ProfilerTag = "ReflectionsFeature_Render";
+        private ProfilingSampler m_ProfilerSampler = new ProfilingSampler(m_ProfilerTag);
+
         private ScreenSpacePlanarReflectionsSettings m_Settings;
 
         RenderTargetHandle m_ScreenSpacePlanarReflection;
@@ -163,6 +238,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         int m_PropertyMainTex;
         int m_PropertyDebugTex;
         int m_PropertyBufferStep;
+        int m_PropertyStencil;
 
         Matrix4x4 m_InvVP;
         Matrix4x4 m_VP;
@@ -223,6 +299,8 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_PropertyMainTex = Shader.PropertyToID("_MainTex");
             m_PropertyDebugTex = Shader.PropertyToID("WorldPositionAndPlaneDistance");
             m_PropertyBufferStep = Shader.PropertyToID("_SSPRBufferStride");
+
+            m_PropertyStencil = Shader.PropertyToID("_StencilRef");
 
             m_InvVP = new Matrix4x4();
             m_VP = new Matrix4x4();
@@ -360,9 +438,11 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_VP = gpuProj * camera.worldToCameraMatrix;
             m_InvVP = m_VP.inverse;
 
+            bool UseCameraDepth = !renderingData.cameraData.requiresDepthTexture && !renderingData.cameraData.isSceneViewCamera;
+
 
             CommandBuffer cmd = CommandBufferPool.Get(m_ProfilerTag);
-            using (new ProfilingSample(cmd, m_ProfilerTag))
+            using (new ProfilingScope(cmd, m_ProfilerSampler))
             {
                 
                 // need to run compute shader to clear
@@ -397,6 +477,19 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 {
                     int Kernal = m_Settings.ApplyEdgeStretch ? m_RenderStretchKernal : m_RenderKernal;
 
+                    if(UseCameraDepth)
+                    {
+                        if(m_MSAA)
+                        {
+                            // change kernal
+                            
+                        }
+                        cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_CameraDepthTarget);
+                    }
+                    else
+                    {
+                        cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_DepthTexture.Identifier());
+                    }
                     if (SystemInfo.graphicsDeviceType == GraphicsDeviceType.Metal)
                     {
                         cmd.SetComputeBufferParam(m_ReflectionShaderCS, Kernal, m_PropertyResult, m_MetalBuffer);
@@ -406,7 +499,9 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                     {
                         cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyResult, m_ScreenSpacePlanarReflectionBuffer.Identifier());
                     }
-                    cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_DepthTexture.Identifier());
+
+                    
+                    //cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_DepthTexture.Identifier());
                     //cmd.SetComputeTextureParam(m_ReflectionShaderCS, m_RenderKernal, m_PropertyDepth, BuiltinRenderTextureType.Depth);
                     cmd.SetComputeIntParams(m_ReflectionShaderCS, m_PropertyResultSize, m_Size.x, m_Size.y);
                     cmd.SetComputeMatrixParam(m_ReflectionShaderCS, m_PropertyInvVP, m_InvVP);
@@ -424,14 +519,14 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 if (m_Settings.ApplyBlur)
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                    RenderReflection(cmd, m_Temp[0].Identifier());
+                    RenderReflection(cmd, m_Temp[0].Identifier(), camera);
                     // render blur
-                    RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier());
+                    RenderBlur(cmd, m_ScreenSpacePlanarReflection.Identifier(), m_Temp[0].Identifier(), camera);
                 }
                 else
                 {
                     // now we can render into the temporary texture where the stencil is set or full screen depending if the optimisation is on
-                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier());
+                    RenderReflection(cmd, m_ScreenSpacePlanarReflection.Identifier(), camera);
                 }
                 
 
@@ -460,14 +555,16 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             }
         }
 
-        void RenderReflection(CommandBuffer cmd, RenderTargetIdentifier target)
+        void RenderReflection(CommandBuffer cmd, RenderTargetIdentifier target, Camera camera)
         {
             
 
-            if(m_Settings.needsStencilPass)
+            if(m_Settings.EnqueuedStencilPass)
             {
+                // set the stencil value
+                m_ReflectionMaterial.SetInt(m_PropertyStencil, m_Settings.StencilValue);
                 // if were MSAA lets use the depth texture other wise we can re-use the camera depth texture
-                cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, m_MSAA ? m_DepthTexture.Identifier() : m_CameraDepthTarget, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
+                cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, m_DepthTexture.Identifier(), RenderBufferLoadAction.Load, RenderBufferStoreAction.Store);
                 cmd.ClearRenderTarget(false, true, Color.black);
             }
             else
@@ -487,19 +584,37 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 cmd.SetGlobalTexture(m_ScreenSpacePlanarReflectionBuffer.id, m_ScreenSpacePlanarReflectionBuffer.Identifier());
             }
             cmd.SetGlobalTexture(m_PropertyMainTex, m_CameraColorTarget);
-            
 
-            cmd.Blit(m_CameraColorTarget, target, m_ReflectionMaterial, 0);
+            cmd.SetViewProjectionMatrices(Matrix4x4.identity, Matrix4x4.identity);
+            cmd.SetViewport(camera.pixelRect);
+            cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_ReflectionMaterial, 0, m_Settings.EnqueuedStencilPass ? 2 : 0);
+
+            if (!m_Settings.ApplyBlur)
+            {
+                cmd.SetViewProjectionMatrices(camera.worldToCameraMatrix, camera.projectionMatrix);
+            }
 
         }
 
-        void RenderBlur(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source)
+        void RenderBlur(CommandBuffer cmd, RenderTargetIdentifier target, RenderTargetIdentifier source, Camera camera)
         {
-            cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            if (m_Settings.EnqueuedStencilPass)
+            {
+                // if were MSAA lets use the depth texture other wise we can re-use the camera depth texture
+                cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store, m_DepthTexture.Identifier(), RenderBufferLoadAction.Load, RenderBufferStoreAction.DontCare);
+            }
+            else
+            {
+                cmd.SetRenderTarget(target, RenderBufferLoadAction.DontCare, RenderBufferStoreAction.Store);
+            }
+
             cmd.ClearRenderTarget(false, true, Color.black);
             cmd.SetGlobalTexture(m_PropertyMainTex, source);
-            cmd.Blit(source, target, m_ReflectionMaterial, 1);
 
+            cmd.DrawMesh(RenderingUtils.fullscreenMesh, Matrix4x4.identity, m_ReflectionMaterial, 0, m_Settings.EnqueuedStencilPass ? 3 : 1);
+
+            cmd.SetViewProjectionMatrices(camera.worldToCameraMatrix, camera.projectionMatrix);
+            
         }
     }
 
@@ -507,6 +622,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
     class DrawReflectiveLayerRenderPass : ScriptableRenderPass
     {
         private const string m_ProfilerTag = "ReflectionsFeature_DrawPass";
+        private ProfilingSampler m_ProfilerSampler = new ProfilingSampler(m_ProfilerTag);
         private ScreenSpacePlanarReflectionsSettings m_Settings;
 
         FilteringSettings m_FilteringSettings;
@@ -532,7 +648,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
             CommandBuffer cmd = CommandBufferPool.Get(m_ProfilerTag);
-            using (new ProfilingSample(cmd, m_ProfilerTag))
+            using (new ProfilingScope(cmd, m_ProfilerSampler))
             {
                 context.ExecuteCommandBuffer(cmd);
                 cmd.Clear();
@@ -570,19 +686,34 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         m_DrawReflectivePass.renderPassEvent = RenderPassEvent.AfterRenderingSkybox;
     }
 
+    bool CanSupportSSPR(ScriptableRenderer renderer, ref RenderingData renderingData)
+    {
+        // do we has a depth texture or support using the camera depth
+        return SystemInfo.supportsComputeShaders // we need compute
+            && (renderingData.cameraData.requiresDepthTexture || renderer.cameraDepth != RenderTargetHandle.CameraTarget.Identifier()) // we need a depth texture to read
+            && SystemInfo.graphicsDeviceType != GraphicsDeviceType.OpenGLES2 // we dont support open gles 2
+            && SystemInfo.graphicsDeviceType != GraphicsDeviceType.OpenGLES3; // we dont support open gles 3
+    }
+
     // Here you can inject one or multiple render passes in the renderer.
     // This method is called when setting up the renderer once per-camera.
     public override void AddRenderPasses(ScriptableRenderer renderer, ref RenderingData renderingData)
     {
-        // we dont bother if we cant use compute
-        if(!SystemInfo.supportsComputeShaders)
+        // we dont bother if we dont support this
+        if(!CanSupportSSPR(renderer, ref renderingData))
         {
             return;
         }
 
+        settings.EnqueuedStencilPass = false;
+
         if (settings.needsStencilPass)
         {
-            renderer.EnqueuePass(m_StencilPass);
+            if(m_StencilPass.Setup(renderer, ref renderingData))
+            {
+                renderer.EnqueuePass(m_StencilPass);
+                settings.EnqueuedStencilPass = true;
+            }
         }
 
         m_ReflectionsPass.SetTargets(renderer);
