@@ -228,9 +228,15 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         int m_RenderKernal;
         int m_RenderStretchKernal;
         int m_DebugKernal;
+        int m_MSSA2Kernal;
+        int m_MSSA4Kernal;
+        int m_MSSA8Kernal;
         int m_PropertyResult;
         int m_PropertyResultSize;
         int m_PropertyDepth;
+        int m_PropertyDepth_MSAA2;
+        int m_PropertyDepth_MSAA4;
+        int m_PropertyDepth_MSAA8;
         int m_PropertyInvVP;
         int m_PropertyVP;
         int m_PropertyReflectionData;
@@ -247,6 +253,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
         RenderStateBlock m_RenderStateBlock;
 
         bool m_MSAA = true;
+        int m_MSAACount = 0;
 
         const bool bDebug = false;
 
@@ -282,6 +289,10 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
                 m_RenderKernal = m_ReflectionShaderCS.FindKernel("CSMain");
                 m_RenderStretchKernal = m_ReflectionShaderCS.FindKernel("CSMain_Stretch");
                 m_DebugKernal = m_ReflectionShaderCS.FindKernel("CSDebug");
+
+                m_MSSA2Kernal = m_ReflectionShaderCS.FindKernel("CSMain_MS2");
+                m_MSSA4Kernal = m_ReflectionShaderCS.FindKernel("CSMain_MS4");
+                m_MSSA8Kernal = m_ReflectionShaderCS.FindKernel("CSMain_MS8");
             }
 
             if(m_ReflectionShader != null)
@@ -292,6 +303,9 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_PropertyResult = Shader.PropertyToID("Result");
             m_PropertyResultSize = Shader.PropertyToID("ResultSize");
             m_PropertyDepth = Shader.PropertyToID("_CameraDepthTexture");
+            m_PropertyDepth_MSAA2 = Shader.PropertyToID("CameraDepth_MSAA2");
+            m_PropertyDepth_MSAA4 = Shader.PropertyToID("CameraDepth_MSAA4");
+            m_PropertyDepth_MSAA8 = Shader.PropertyToID("CameraDepth_MSAA8");
             m_PropertyInvVP = Shader.PropertyToID("InverseViewProjection");
             m_PropertyVP = Shader.PropertyToID("ViewProjection");
             m_PropertyReflectionData = Shader.PropertyToID("ReflectionData");
@@ -306,6 +320,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
             m_VP = new Matrix4x4();
             m_ReflectionData = new Vector4[3] { new Vector4(), new Vector4(), new Vector4() };
             m_MSAA = false;
+            m_MSAACount = 1;
         }
 
         public void SetTargets(ScriptableRenderer renderer)
@@ -372,6 +387,7 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
             // if were using MSAA then we would have to resolve the depth texture again to get the stencil values
             m_MSAA = cameraTextureDescriptor.msaaSamples > 1;
+            m_MSAACount = cameraTextureDescriptor.msaaSamples;
 
             m_ThreadSize.x = m_Size.x / 32 + (m_Size.x % 32 > 0 ? 1 : 0);
             m_ThreadSize.y = m_Size.y / 32 + (m_Size.y % 32 > 0 ? 1 : 0);
@@ -479,12 +495,23 @@ public class ScreenSpacePlanarReflectionsFeature : ScriptableRendererFeature
 
                     if(UseCameraDepth)
                     {
-                        if(m_MSAA)
+                        if (m_MSAA)
                         {
-                            // change kernal
-                            
+                            // okay change the kernal to
+                            switch(m_MSAACount)
+                            {
+                                case 2: Kernal = m_MSSA2Kernal; cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth_MSAA2, m_CameraDepthTarget); break;
+                                case 4: Kernal = m_MSSA4Kernal; cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth_MSAA4, m_CameraDepthTarget); break;
+                                case 8: Kernal = m_MSSA8Kernal; cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth_MSAA8, m_CameraDepthTarget); break;
+                                default:
+                                    Debug.LogError("Undefined MSAA Level");
+                                    break;
+                            }
                         }
-                        cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_CameraDepthTarget);
+                        else
+                        {
+                            cmd.SetComputeTextureParam(m_ReflectionShaderCS, Kernal, m_PropertyDepth, m_CameraDepthTarget);
+                        }
                     }
                     else
                     {

@@ -6,6 +6,9 @@
 #pragma kernel CSMain
 #pragma kernel CSMain_Stretch
 #pragma kernel CSDebug
+#pragma kernel CSMain_MS2
+#pragma kernel CSMain_MS4
+#pragma kernel CSMain_MS8
 #pragma enable_d3d11_debug_symbols
 
 
@@ -195,4 +198,201 @@ void CSDebug(uint3 id : SV_DispatchThreadID)
 	uint Hash = (id.y << 16) | (id.x & 0xFFFF);
 	Result[INDEX(id.xy)] = Hash;
 	WorldPositionAndPlaneDistance[id.xy] = float4(wpos.x, wpos.y, wpos.z, distance);
+}
+
+#define DEPTH_TEXTURE_MS(name, samples) Texture2DMS<float, samples> name
+#define LOAD(name, uv, sampleIndex) name.Load(uv, sampleIndex)
+
+DEPTH_TEXTURE_MS(CameraDepth_MSAA2, 2);
+DEPTH_TEXTURE_MS(CameraDepth_MSAA4, 4);
+DEPTH_TEXTURE_MS(CameraDepth_MSAA8, 8);
+
+[numthreads(32, 32, 1)]
+void CSMain_MS2(uint3 id : SV_DispatchThreadID)
+{
+
+	// early out
+	if (id.x >= ResultSize.x || id.y >= ResultSize.y)
+	{
+		return;
+	}
+
+	float2 uv = id.xy * ReflectionData[1].xy + ReflectionData[1].zw;
+#if UNITY_UV_STARTS_AT_TOP
+	uv.y = 1.0 - uv.y;
+#endif
+
+#if UNITY_REVERSED_Z 
+	float deviceDepth = max(LOAD(CameraDepth_MSAA2, int2(id.x, id.y), 0), LOAD(CameraDepth_MSAA2, int2(id.x, id.y), 1));
+#else
+	float deviceDepth = min(LOAD(CameraDepth_MSAA2, int2(id.x, id.y), 0), LOAD(CameraDepth_MSAA2, int2(id.x, id.y), 1));
+#endif
+
+	float4 positionCS = float4(uv * 2.0 - 1.0, deviceDepth, 1.0);
+	float4 hpositionWS = mul(InverseViewProjection, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
+
+
+	// compute our plane distance and position
+	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
+	// early out as anything below the plane we dont care about, unless is the very far back, in that casee we guess its the sky box
+	if (distance < 0.001)
+		return;
+
+	float3 reflect_wpos = wpos - (ReflectionData[0].xyz * (distance * 2));
+	float4 reflect_cpos = mul(ViewProjection, float4(reflect_wpos, 1.0));
+	float2 reflect_uv = reflect_cpos.xy / reflect_cpos.w;
+	reflect_uv = float2(0.5, 0.5) + reflect_uv * 0.5;
+
+
+	// do we have a valid location?
+	if (reflect_uv.x >= 0 && reflect_uv.y >= 0 && reflect_uv.x <= 1.0 && reflect_uv.y <= 1.0)
+	{
+#if UNITY_UV_STARTS_AT_TOP
+		reflect_uv.y = 1.0 - reflect_uv.y;
+#endif
+		// calculate hash
+		uint2 Location = uint2(reflect_uv.x * ResultSize.x, reflect_uv.y * ResultSize.y);
+
+		uint Hash = (id.y << 16) | (id.x & 0xFFFF);
+
+		uint dontCare;
+#if UNITY_UV_STARTS_AT_TOP
+		InterlockedMin(Result[INDEX(Location)], Hash, dontCare);
+#else
+		InterlockedMax(Result[INDEX(Location)], Hash, dontCare);
+#endif
+	}
+}
+
+[numthreads(32, 32, 1)]
+void CSMain_MS4(uint3 id : SV_DispatchThreadID)
+{
+
+	// early out
+	if (id.x >= ResultSize.x || id.y >= ResultSize.y)
+	{
+		return;
+	}
+
+	float2 uv = id.xy * ReflectionData[1].xy + ReflectionData[1].zw;
+#if UNITY_UV_STARTS_AT_TOP
+	uv.y = 1.0 - uv.y;
+#endif
+
+#if UNITY_REVERSED_Z 
+	float deviceDepth = max(LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 0), LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 1));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 2));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 3));
+#else
+	float deviceDepth = min(LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 0), LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 1));
+	deviceDepth = min(deviceDepth, LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 2));
+	deviceDepth = min(deviceDepth, LOAD(CameraDepth_MSAA4, int2(id.x, id.y), 3));
+#endif
+
+	float4 positionCS = float4(uv * 2.0 - 1.0, deviceDepth, 1.0);
+	float4 hpositionWS = mul(InverseViewProjection, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
+
+
+	// compute our plane distance and position
+	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
+	// early out as anything below the plane we dont care about, unless is the very far back, in that casee we guess its the sky box
+	if (distance < 0.001)
+		return;
+
+	float3 reflect_wpos = wpos - (ReflectionData[0].xyz * (distance * 2));
+	float4 reflect_cpos = mul(ViewProjection, float4(reflect_wpos, 1.0));
+	float2 reflect_uv = reflect_cpos.xy / reflect_cpos.w;
+	reflect_uv = float2(0.5, 0.5) + reflect_uv * 0.5;
+
+
+	// do we have a valid location?
+	if (reflect_uv.x >= 0 && reflect_uv.y >= 0 && reflect_uv.x <= 1.0 && reflect_uv.y <= 1.0)
+	{
+#if UNITY_UV_STARTS_AT_TOP
+		reflect_uv.y = 1.0 - reflect_uv.y;
+#endif
+		// calculate hash
+		uint2 Location = uint2(reflect_uv.x * ResultSize.x, reflect_uv.y * ResultSize.y);
+
+		uint Hash = (id.y << 16) | (id.x & 0xFFFF);
+
+		uint dontCare;
+#if UNITY_UV_STARTS_AT_TOP
+		InterlockedMin(Result[INDEX(Location)], Hash, dontCare);
+#else
+		InterlockedMax(Result[INDEX(Location)], Hash, dontCare);
+#endif
+	}
+}
+
+[numthreads(32, 32, 1)]
+void CSMain_MS8(uint3 id : SV_DispatchThreadID)
+{
+
+	// early out
+	if (id.x >= ResultSize.x || id.y >= ResultSize.y)
+	{
+		return;
+	}
+
+	float2 uv = id.xy * ReflectionData[1].xy + ReflectionData[1].zw;
+#if UNITY_UV_STARTS_AT_TOP
+	uv.y = 1.0 - uv.y;
+#endif
+
+#if UNITY_REVERSED_Z 
+	float deviceDepth = max(LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 0), LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 1));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 2));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 3));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 4));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 5));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 6));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 7));
+#else
+	float deviceDepth = min(LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 0), LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 1));
+	deviceDepth = min(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 2));
+	deviceDepth = min(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 3));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 4));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 5));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 6));
+	deviceDepth = max(deviceDepth, LOAD(CameraDepth_MSAA8, int2(id.x, id.y), 7));
+#endif
+
+	float4 positionCS = float4(uv * 2.0 - 1.0, deviceDepth, 1.0);
+	float4 hpositionWS = mul(InverseViewProjection, positionCS);
+	float3 wpos = hpositionWS.xyz / hpositionWS.w;
+
+
+	// compute our plane distance and position
+	float distance = dot(wpos, ReflectionData[0].xyz) + ReflectionData[0].w;
+	// early out as anything below the plane we dont care about, unless is the very far back, in that casee we guess its the sky box
+	if (distance < 0.001)
+		return;
+
+	float3 reflect_wpos = wpos - (ReflectionData[0].xyz * (distance * 2));
+	float4 reflect_cpos = mul(ViewProjection, float4(reflect_wpos, 1.0));
+	float2 reflect_uv = reflect_cpos.xy / reflect_cpos.w;
+	reflect_uv = float2(0.5, 0.5) + reflect_uv * 0.5;
+
+
+	// do we have a valid location?
+	if (reflect_uv.x >= 0 && reflect_uv.y >= 0 && reflect_uv.x <= 1.0 && reflect_uv.y <= 1.0)
+	{
+#if UNITY_UV_STARTS_AT_TOP
+		reflect_uv.y = 1.0 - reflect_uv.y;
+#endif
+		// calculate hash
+		uint2 Location = uint2(reflect_uv.x * ResultSize.x, reflect_uv.y * ResultSize.y);
+
+		uint Hash = (id.y << 16) | (id.x & 0xFFFF);
+
+		uint dontCare;
+#if UNITY_UV_STARTS_AT_TOP
+		InterlockedMin(Result[INDEX(Location)], Hash, dontCare);
+#else
+		InterlockedMax(Result[INDEX(Location)], Hash, dontCare);
+#endif
+	}
 }
