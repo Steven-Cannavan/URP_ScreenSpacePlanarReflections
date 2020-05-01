@@ -47,8 +47,6 @@ Renderes all renderers in the Reflective Surface Layer, follows opaque rules (fo
 
 
 ## In Progress
-* iOS Fix
-* Stencil Optmization
 * Roughness / Kawase blur sampling
 
 ## TODO
