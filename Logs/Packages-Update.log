@@ -1,0 +1,16 @@
+
+=== Tue Sep 13 16:09:25 2022
+
+Packages were changed.
+Update Mode: updateDependencies
+
+The following packages were added:
+  com.unity.ide.visualstudio@2.0.15
+The following packages were updated:
+  com.unity.collab-proxy from version 1.2.16 to 1.14.18
+  com.unity.ide.rider from version 1.1.4 to 1.2.1
+  com.unity.ide.vscode from version 1.1.4 to 1.2.5
+  com.unity.render-pipelines.universal from version 7.2.1 to 7.3.1
+  com.unity.test-framework from version 1.1.9 to 1.1.31
+  com.unity.textmeshpro from version 2.0.1 to 2.1.4
+  com.unity.timeline from version 1.2.10 to 1.2.18
